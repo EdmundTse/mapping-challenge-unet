@@ -19,7 +19,7 @@ based around UNet.
 
 """
 import tensorflow as tf
-from model.layers import InputBlock, DownsampleBlock, BottleneckBlock, UpsampleBlock, OutputBlock
+from .layers import InputBlock, DownsampleBlock, BottleneckBlock, UpsampleBlock, OutputBlock
 
 
 class Unet(tf.keras.Model):
