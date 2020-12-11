@@ -1,0 +1,4 @@
+Pillow
+tf2onnx
+munch
+horovod
