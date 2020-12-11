@@ -103,7 +103,9 @@ def create_tf_example(image,
   category_ids = []
   area = []
   encoded_mask_png = []
+  masks = [np.zeros((image_width, image_height), dtype=np.int8)]
   num_annotations_skipped = 0
+
   for object_annotations in annotations_list:
     (x, y, width, height) = tuple(object_annotations['bbox'])
     if width <= 0 or height <= 0:
@@ -133,6 +135,7 @@ def create_tf_example(image,
       output_io = io.BytesIO()
       pil_image.save(output_io, format='PNG')
       encoded_mask_png.append(output_io.getvalue())
+      masks.append(binary_mask)
 
   feature_dict = {
       'image/height': dataset_util.int64_feature(image_height),
@@ -151,8 +154,13 @@ def create_tf_example(image,
       'image/object/area': dataset_util.float_list_feature(area),
   }
   if include_masks:
-    feature_dict['image/object/mask'] = (
-        dataset_util.bytes_list_feature(encoded_mask_png))
+    flattened_mask = np.amax(np.stack(masks), axis=0)
+    pil_image = PIL.Image.fromarray(flattened_mask)
+    output_io = io.BytesIO()
+    pil_image.save(output_io, format='PNG')
+    feature_dict['image/segmentation/class/encoded'] = dataset_util.bytes_feature(output_io.getvalue())
+    feature_dict['image/segmentation/class/format'] = dataset_util.bytes_feature('png'.encode('utf8'))
+    feature_dict['image/object/mask'] = dataset_util.bytes_list_feature(encoded_mask_png)
 
   example = tf.train.Example(features=tf.train.Features(feature=feature_dict))
   return (key, example, num_annotations_skipped)
