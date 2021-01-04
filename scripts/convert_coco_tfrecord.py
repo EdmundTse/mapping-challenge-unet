@@ -103,7 +103,7 @@ def create_tf_example(image,
   category_ids = []
   area = []
   encoded_mask_png = []
-  masks = [np.zeros((image_width, image_height), dtype=np.int8)]
+  masks = [np.zeros((image_width, image_height), dtype=np.uint8)]
   num_annotations_skipped = 0
 
   for object_annotations in annotations_list:
@@ -155,10 +155,9 @@ def create_tf_example(image,
   }
   if include_masks:
     flattened_mask = np.amax(np.stack(masks), axis=0)
-    pil_image = PIL.Image.fromarray(flattened_mask)
-    output_io = io.BytesIO()
-    pil_image.save(output_io, format='PNG')
-    feature_dict['image/segmentation/class/encoded'] = dataset_util.bytes_feature(output_io.getvalue())
+    flattened_mask = np.expand_dims(flattened_mask, -1)
+    png_bytes = tf.io.encode_png(flattened_mask).numpy()
+    feature_dict['image/segmentation/class/encoded'] = dataset_util.bytes_feature(png_bytes)
     feature_dict['image/segmentation/class/format'] = dataset_util.bytes_feature('png'.encode('utf8'))
     feature_dict['image/object/mask'] = dataset_util.bytes_list_feature(encoded_mask_png)
 
