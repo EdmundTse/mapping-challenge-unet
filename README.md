@@ -39,19 +39,21 @@ Convert the Mapping Challenge training dataset from MS-COCO format to TFRecord.
 $ scripts/prepare_data.sh data
 ```
 
-This produces TFRecords under the processed data directory:
+This produces TFRecords under the `processed` data directory:
 
 ```
 |- data/
    |- raw/
       |- mapping-challenge/
+         |- test_images.tar.gz
          |- train.tar.gz
+         |- val.tar.gz
    |- processed/
       |- mapping-challenge/
+         |- test_images/
+            |- *.jpg
          |- train/
-         ...
-         |- train.record-00000-of-00100
-         |- train.record-00001-of-00100
-         ...
-         |- train.record-00099-of-00100
+         |- val/
+         |- train.record-*-of-00020
+         |- val.record-*-of-00005
 ```
