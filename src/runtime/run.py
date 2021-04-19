@@ -19,8 +19,8 @@ from PIL import Image
 import horovod.tensorflow as hvd
 import tensorflow as tf
 
-from runtime.losses import partial_losses
-from runtime.parse_results import process_performance_stats
+from .losses import partial_losses
+from .parse_results import process_performance_stats
 
 
 def train(params, model, dataset, logger):

@@ -13,56 +13,99 @@
 # limitations under the License.
 
 """ Dataset class encapsulates the data loading"""
+import glob
+import io
 import multiprocessing
 import os
 from collections import deque
 
 import numpy as np
 import tensorflow as tf
-from PIL import Image, ImageSequence
+from PIL import Image
 
 
 class Dataset:
     """Load, separate and prepare the data for training and prediction"""
 
-    def __init__(self, data_dir, batch_size, fold, augment=False, gpu_id=0, num_gpus=1, seed=0):
-        if not os.path.exists(data_dir):
-            raise FileNotFoundError('Cannot find data dir: {}'.format(data_dir))
-        self._data_dir = data_dir
+    def __init__(self, train_glob, eval_glob, test_dir, batch_size, fold, augment=False, gpu_id=0, num_gpus=1, seed=0):
+        train_files = glob.glob(train_glob)
+        if len(train_files) == 0:
+            raise FileNotFoundError('Files not found: {}'.format(train_glob))
+        eval_files = glob.glob(eval_glob)
+        if len(eval_files) == 0:
+            raise FileNotFoundError('Files not found: {}'.format(eval_glob))
+
         self._batch_size = batch_size
         self._augment = augment
 
         self._seed = seed
 
-        images = self._load_multipage_tiff(os.path.join(self._data_dir, 'train-volume.tif'))
-        masks = self._load_multipage_tiff(os.path.join(self._data_dir, 'train-labels.tif'))
-        self._test_images = \
-            self._load_multipage_tiff(os.path.join(self._data_dir, 'test-volume.tif'))
-
-        train_indices, val_indices = self._get_val_train_indices(len(images), fold)
-        self._train_images = images[train_indices]
-        self._train_masks = masks[train_indices]
-        self._val_images = images[val_indices]
-        self._val_masks = masks[val_indices]
-
         self._num_gpus = num_gpus
         self._gpu_id = gpu_id
+        self._num_readers = multiprocessing.cpu_count() // self._num_gpus
+        self._train_data = tf.data.TFRecordDataset(train_files, num_parallel_reads=self._num_readers)    
+        self._eval_data = tf.data.TFRecordDataset(eval_files, num_parallel_reads=self._num_readers)
+        self._test_dir = test_dir
 
     @property
     def train_size(self):
-        return len(self._train_images)
+        # Iterate through the TFRecordDataset to count it
+        size = 0
+        for _ in self._train_data:
+            size += 1
+        return size
 
     @property
     def eval_size(self):
-        return len(self._val_images)
+        # Iterate through the TFRecordDataset to count it
+        size = 0
+        for _ in self._eval_data:
+            size += 1
+        return size
 
     @property
     def test_size(self):
-        return len(self._test_images)
+        return 0
 
-    def _load_multipage_tiff(self, path):
-        """Load tiff images containing many images in the channel dimension"""
-        return np.array([np.array(p) for p in ImageSequence.Iterator(Image.open(path))])
+    def _parse_function(self, example_proto):
+        """Function to parse the example proto.
+
+        Args:
+          example_proto: Proto in the format of tf.Example.
+
+        Returns:
+          A dictionary with parsed image, label, height, width and image name.
+
+        Raises:
+          ValueError: Label is of wrong shape.
+        """
+
+        features = {
+            'image/height': tf.io.FixedLenFeature((), tf.int64, default_value=0),
+            'image/width': tf.io.FixedLenFeature((), tf.int64, default_value=0),
+            'image/filename': tf.io.FixedLenFeature((), tf.string, default_value=''),
+            'image/source_id': tf.io.FixedLenFeature((), tf.string, default_value=''),
+            'image/key/sha256': tf.io.FixedLenFeature((), tf.string, default_value=''),
+            'image/encoded': tf.io.FixedLenFeature((), tf.string, default_value=''),
+            'image/format': tf.io.FixedLenFeature((), tf.string, default_value='jpeg'),
+            'image/object/bbox/xmin': tf.io.VarLenFeature(tf.float32),
+            'image/object/bbox/xmax': tf.io.VarLenFeature(tf.float32),
+            'image/object/bbox/ymin': tf.io.VarLenFeature(tf.float32),
+            'image/object/bbox/ymax': tf.io.VarLenFeature(tf.float32),
+            'image/object/is_crowd': tf.io.VarLenFeature(tf.int64),
+            'image/object/area': tf.io.VarLenFeature(tf.float32),
+            'image/object/mask': tf.io.VarLenFeature(tf.string),
+            'image/segmentation/class/encoded': tf.io.FixedLenFeature((), tf.string, default_value=''),
+            'image/segmentation/class/format': tf.io.FixedLenFeature((), tf.string, default_value='png'),
+        }
+        
+        parsed_features = tf.io.parse_single_example(example_proto, features)
+
+        image = tf.image.decode_jpeg(parsed_features['image/encoded'])
+        label = tf.image.decode_png(parsed_features['image/segmentation/class/encoded'])
+        label.set_shape([None, None, 1])
+
+        return image, label
 
     def _get_val_train_indices(self, length, fold, ratio=0.8):
         assert 0 < ratio <= 1, "Train/total data ratio must be in range (0.0, 1.0]"
@@ -82,19 +125,18 @@ class Dataset:
 
     def _normalize_inputs(self, inputs):
         """Normalize inputs"""
-        inputs = tf.expand_dims(tf.cast(inputs, tf.float32), -1)
+        inputs = tf.image.rgb_to_grayscale(inputs)
 
-        # Center around zero
-        inputs = tf.divide(inputs, 127.5) - 1
         # Resize to match output size
         inputs = tf.image.resize(inputs, (388, 388))
+        # Center around zero
+        inputs = tf.divide(inputs, 127.5) - 1
 
         return tf.image.resize_with_crop_or_pad(inputs, 572, 572)
 
     def _normalize_labels(self, labels):
         """Normalize labels"""
-        labels = tf.expand_dims(tf.cast(labels, tf.float32), -1)
-        labels = tf.divide(labels, 255)
+        labels = tf.divide(tf.cast(labels, tf.float32), 255)
 
         # Resize to match output size
         labels = tf.image.resize(labels, (388, 388))
@@ -166,8 +208,7 @@ class Dataset:
 
     def train_fn(self, drop_remainder=False):
         """Input function for training"""
-        dataset = tf.data.Dataset.from_tensor_slices(
-            (self._train_images, self._train_masks))
+        dataset = self._train_data.map(self._parse_function)
         dataset = dataset.shard(self._num_gpus, self._gpu_id)
         dataset = dataset.repeat()
         dataset = dataset.shuffle(self._batch_size * 3)
@@ -180,8 +221,7 @@ class Dataset:
 
     def eval_fn(self, count, drop_remainder=False):
         """Input function for validation"""
-        dataset = tf.data.Dataset.from_tensor_slices(
-            (self._val_images, self._val_masks))
+        dataset = self._eval_data.map(self._parse_function)
         dataset = dataset.repeat(count=count)
         dataset = dataset.map(self._preproc_eval_samples,
                               num_parallel_calls=multiprocessing.cpu_count())
@@ -192,8 +232,8 @@ class Dataset:
 
     def test_fn(self, count, drop_remainder=False):
         """Input function for testing"""
-        dataset = tf.data.Dataset.from_tensor_slices(
-            self._test_images)
+        dataset = tf.keras.preprocessing.image_dataset_from_directory(
+            self._test_dir, batch_size=self._batch_size, image_size=(388, 388), seed=self._seed)
         dataset = dataset.repeat(count=count)
         dataset = dataset.map(self._normalize_inputs)
         dataset = dataset.batch(self._batch_size, drop_remainder=drop_remainder)
