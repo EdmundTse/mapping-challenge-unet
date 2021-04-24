@@ -27,7 +27,7 @@ from PIL import Image
 class Dataset:
     """Load, separate and prepare the data for training and prediction"""
 
-    def __init__(self, train_glob, eval_glob, test_dir, batch_size, fold, augment=False, gpu_id=0, num_gpus=1, seed=0):
+    def __init__(self, train_glob, eval_glob, test_glob, batch_size, fold, augment=False, gpu_id=0, num_gpus=1, seed=0):
         train_files = glob.glob(train_glob)
         if len(train_files) == 0:
             raise FileNotFoundError('Files not found: {}'.format(train_glob))
@@ -45,28 +45,39 @@ class Dataset:
         self._num_readers = multiprocessing.cpu_count() // self._num_gpus
         self._train_data = tf.data.TFRecordDataset(train_files, num_parallel_reads=self._num_readers)    
         self._eval_data = tf.data.TFRecordDataset(eval_files, num_parallel_reads=self._num_readers)
-        self._test_dir = test_dir
+        self._test_data = tf.data.Dataset.list_files(test_glob, shuffle=False).map(self._parse_image)
+        self._train_size = None
+        self._eval_size = None
 
     @property
     def train_size(self):
-        # Iterate through the TFRecordDataset to count it
-        size = 0
-        for _ in self._train_data:
-            size += 1
-        return size
+        if self._train_size is None:
+            # Iterate through the TFRecordDataset to count it
+            size = 0
+            for _ in self._train_data:
+                size += 1
+            self._train_size = size
+        return self._train_size
 
     @property
     def eval_size(self):
-        # Iterate through the TFRecordDataset to count it
-        size = 0
-        for _ in self._eval_data:
-            size += 1
-        return size
+        if self._eval_size is None:
+            # Iterate through the TFRecordDataset to count it
+            size = 0
+            for _ in self._eval_data:
+                size += 1
+            self._eval_size = size
+        return self._eval_size
 
     @property
     def test_size(self):
-        return 0
-
+        return len(self._test_data)
+    
+    def _parse_image(self, file_path):
+        image = tf.io.read_file(file_path)
+        image = tf.image.decode_jpeg(image)
+        return image
+    
     def _parse_function(self, example_proto):
         """Function to parse the example proto.
 
@@ -125,7 +136,7 @@ class Dataset:
 
     def _normalize_inputs(self, inputs):
         """Normalize inputs"""
-        inputs = tf.image.rgb_to_grayscale(inputs)
+        inputs = tf.cast(inputs, tf.float32)
 
         # Resize to match output size
         inputs = tf.image.resize(inputs, (388, 388))
@@ -136,7 +147,7 @@ class Dataset:
 
     def _normalize_labels(self, labels):
         """Normalize labels"""
-        labels = tf.divide(tf.cast(labels, tf.float32), 255)
+        labels = tf.cast(labels, tf.float32)
 
         # Resize to match output size
         labels = tf.image.resize(labels, (388, 388))
@@ -232,9 +243,7 @@ class Dataset:
 
     def test_fn(self, count, drop_remainder=False):
         """Input function for testing"""
-        dataset = tf.keras.preprocessing.image_dataset_from_directory(
-            self._test_dir, batch_size=self._batch_size, image_size=(388, 388), seed=self._seed)
-        dataset = dataset.repeat(count=count)
+        dataset = self._test_data.repeat(count=count)
         dataset = dataset.map(self._normalize_inputs)
         dataset = dataset.batch(self._batch_size, drop_remainder=drop_remainder)
         dataset = dataset.prefetch(self._batch_size)
