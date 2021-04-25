@@ -2,3 +2,5 @@ Pillow
 tf2onnx
 munch
 horovod
+jupyterlab
+scikit-image

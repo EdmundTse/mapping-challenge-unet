@@ -1,4 +1,4 @@
-FROM tensorflow/tensorflow:2.2.0-gpu
+FROM tensorflow/tensorflow:2.4.1-gpu
 
 ARG DEBIAN_FRONTEND=noninteractive
 
@@ -20,18 +20,15 @@ WORKDIR /home/tensorflow/models/research/
 RUN cp object_detection/packages/tf2/setup.py ./
 ENV PATH="/home/tensorflow/.local/bin:${PATH}"
 
-RUN python -m pip install -U pip
-RUN python -m pip install .
+RUN python -m pip install --user --use-feature=2020-resolver .
 
 ENV TF_CPP_MIN_LOG_LEVEL 3
 
 # Install Nvidia and project dependencies
-RUN pip install git+https://github.com/NVIDIA/dllogger
+RUN pip install  --user git+https://github.com/NVIDIA/dllogger
 
 ADD requirements.txt /home/tensorflow/requirements.txt
-RUN python -m pip install -r /home/tensorflow/requirements.txt
+RUN python -m pip install -r /home/tensorflow/requirements.txt  --user --use-feature=2020-resolver
 
 # Switch to the directory where the project will be mounted
 WORKDIR /code
-
-RUN python -m pip install jupyterlab
